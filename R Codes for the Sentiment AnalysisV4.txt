@@ -1,0 +1,275 @@
+###########################################################
+############## Sentiment Analysis Project##################
+###########################################################
+
+#Loading Required Packages
+library(RXKCD)
+library(tm)
+library(SnowballC)
+library(wordcloud)
+library(RColorBrewer)
+library(Rcpp)
+library(RCurl)
+library(bitops)
+library(twitteR)
+library(ggplot2)
+library(sentiment)
+library(Rstem)
+library(plyr)
+require(stringr)
+require(xts)
+library(gdata)
+library(xlsx)
+
+#Setting up working directory
+getwd()
+
+setwd("C:/Users/lenovo/Documents/Edvancer Text Analytics/WorkingD/Project")
+
+#Readiing the input file - Amazon Reviews list
+
+mydata <- read.xlsx("C:/Users/lenovo/Documents/Edvancer Text Analytics/06_Project/Reviews/Reviews1.xlsx", sheetName = "Sheet1",header=F)
+
+#Checking the structure of the data
+class(mydata)
+str(mydata)
+
+#Adding Column names to the dataframe
+colnames(mydata) = c("ID","Reviews")
+
+
+## Text Preprocessing Steps
+myCorpus = Corpus(VectorSource(mydata$Reviews)) 
+
+inspect(myCorpus[3])
+
+### Removing junk values###
+
+
+for (j in seq(myCorpus))
+{
+  myCorpus[[j]] <- gsub("&quot;", "", myCorpus[[j]])
+  myCorpus[[j]] <- gsub("<p>", "", myCorpus[[j]])
+  myCorpus[[j]] <- gsub("<br>", "", myCorpus[[j]])
+  }
+
+inspect(myCorpus[16])
+
+##writeLines(as.character(myCorpus), con="mycorpus.txt") - if corpus needs to be printed
+
+### conversion to lower case ###
+
+myCorpus <- tm_map(myCorpus, tolower)
+
+inspect(myCorpus[16])
+
+### Remove punctuation ###
+
+myCorpus <- tm_map(myCorpus, removePunctuation)
+
+inspect(myCorpus[16])
+
+### Remove English Stopwords ###
+myCorpus <- tm_map(myCorpus, removeWords, stopwords("english"))
+
+inspect(myCorpus[16])
+
+### Strip whitespaces ###
+
+myCorpus <- tm_map(myCorpus, stripWhitespace)
+
+inspect(myCorpus[16])
+
+### Removing bad words ###
+
+bads = readLines("Terms-to-Block.csv") # make sure you download the file and store it in working directory
+
+myCorpus <- tm_map(myCorpus, removeWords, bads)
+
+inspect(myCorpus[16])
+
+### remove single letter ###
+
+myCorpus <- tm_map(myCorpus, removeWords, letters)
+
+class(myCorpus)
+
+# converting corpus to data frame
+myCorpus2 <- tm_map(myCorpus, PlainTextDocument)
+
+
+myCorpus1 <- data.frame(text = unlist(sapply(myCorpus2, '[', "content")), stringsAsFactors = FALSE)
+
+View(myCorpus1)
+
+# remove NAs in some_txt
+
+#myCorpus1 = myCorpus1[!is.na(myCorpus1)]
+
+#names(myCorpus1) = NULL
+
+#Performing Sentiment Analysis #
+
+### classify emotion ###
+class_emo = classify_emotion(myCorpus1, algorithm="bayes", prior=1.0)
+
+head(class_emo)
+
+# get emotion best fit
+emotion = class_emo[,7]
+
+# substitute NA's by "Neutral"
+emotion[is.na(emotion)] = "neutral"
+
+# classify polarity
+class_pol = classify_polarity(myCorpus1, algorithm="bayes")
+
+head(class_pol)
+
+# get polarity best fit
+polarity = class_pol[,4]
+
+#Create data frame with the results and obtain some general statistics
+# data frame with results
+sent_df = data.frame(text=mydata, emotion=emotion, polarity=polarity, stringsAsFactors=FALSE)
+
+head(sent_df)
+
+# getting this file out to an excel file
+
+#write.xlsx(sent_df, "C:/Users/lenovo/Documents/Edvancer Text Analytics/WorkingD/Project/Result_bayesV1.xlsx")
+
+
+# sort data frame
+sent_df6 = within(sent_df,emotion <- factor(emotion, levels=names(sort(table(emotion), decreasing=TRUE))))
+
+
+# plot distribution of emotions
+
+ggplot(sent_df6, aes(x=emotion)) +
+  geom_bar(aes(y=..count.., fill=emotion)) +
+  scale_fill_brewer(palette="Dark2") +
+  labs(x="emotion categories", y="number of Reviews")
+
+# plot distribution of polarity
+ggplot(sent_df6, aes(x=polarity)) +
+  geom_bar(aes(y=..count.., fill=polarity)) +
+  scale_fill_brewer(palette="RdGy") +
+  labs(x="polarity categories", y="number of Reviews")
+
+#Separate the text by emotions and visualize the words 
+#with a comparison cloud separating text by emotion
+emos = levels(factor(sent_df$emotion))
+nemo = length(emos)
+emos
+nemo
+emo.docs = rep("", nemo)
+
+for (i in 1:nemo)
+{
+  tmp = myCorpus1[emotion == emos[i],]
+  emo.docs[i] = paste(tmp, collapse=" ")
+}
+
+View(sent_df)
+
+# remove stopwords
+emo.docs = removeWords(emo.docs, stopwords("english"))
+
+# create corpus
+corpus = Corpus(VectorSource(emo.docs))
+
+#remove white spaces
+corpus<- tm_map(corpus, stripWhitespace)
+
+#convert to lower case
+corpus<- tm_map(corpus, tolower)
+
+#stop word removal
+corpus<- tm_map(corpus, removeWords, stopwords("english"))
+
+#apply stemming function
+corpus<- tm_map(corpus, stemDocument,language = ("english"))
+
+#remove punctuation
+corpus<- tm_map(corpus, removePunctuation)
+
+#remove numbers
+corpus<- tm_map(corpus, removeNumbers)
+
+#command to change the class of the corpus
+corpus2 <- tm_map(corpus, PlainTextDocument)
+
+corpus <- Corpus(VectorSource(corpus2))
+
+
+
+#create Term document matrix
+tdm = TermDocumentMatrix(corpus)
+tdm = as.matrix(tdm)
+colnames(tdm) = emos
+
+# comparison word cloud
+comparison.cloud(tdm, colors = brewer.pal(nemo, "Dark2"),
+                 scale = c(3,.5), random.order = FALSE, 
+                 title.size = 1.5)
+
+#table showing polarity and emotion
+table(sent_df$polarity,sent_df$emotion)
+table(sent_df$emotion)
+table(sent_df$polarity)
+
+#Simple word cloud
+#tdm = DocumentTermMatrix(corpus)
+tdm = as.matrix(tdm)
+tdm = data.frame(tdm)
+
+freq<-sort(rowSums(tdm), decreasing=TRUE)
+myNames <- names(freq)
+k <- which(names(freq)=="long")
+myNames[k] <- "long"
+d <- data.frame(word=myNames, freq)
+
+allwords<-d
+
+
+#creating a word cloud
+wordcloud(d$word, d$freq, scale=c(5,0.3),min.freq=250,
+          rot.per=.15,max.words=Inf,
+          random.order=F,font=2,colors = brewer.pal(8, "Dark2"))
+
+
+View(sent_df)
+
+#Readiing the input file - Amazon ratings list
+ratings = read.csv("C:/Users/lenovo/Documents/Edvancer Text Analytics/06_Project/Ratings.csv", header=T)
+
+View(ratings)
+
+# Combining ratings with reviews, emotions and sentiments
+
+sent_df1 = cbind(sent_df,ratings[2] )
+
+View(sent_df1)
+
+# Plotting the ratings into a chart
+
+ggplot(sent_df1, aes(x=ratings)) +
+  geom_bar(aes(y=..count.., fill=ratings)) +
+  scale_fill_brewer(palette="Dark2") +
+  labs(x="Rating categories", y="number of Reviews")
+
+# Plotting sentiment vs ratings distribution
+counts <- table(sent_df1$polarity, sent_df1$ratings)
+
+barplot(counts, main="Review Distribution by Ratings & Sentiments",
+        xlab="Ratings (1 to 5)", ylab = "No of Reviews",col=c("red","darkblue","darkgreen"),
+        legend = rownames(counts), beside=TRUE,args.legend = list(x="topleft"))
+
+# Plotting sentimet vs emotion distribution
+counts1 <- table(sent_df1$polarity, sent_df1$emotion)
+
+barplot(counts1, main="Review Distribution by Ratings & Emotion",
+        xlab="Emotions", ylab = "No of Reviews",col=c("red","darkblue","darkgreen"),
+        legend = rownames(counts), beside=TRUE,args.legend = list(x="topleft"))
+
